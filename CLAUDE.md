@@ -14,26 +14,36 @@ npm test -- --watchAll=false src/utils/format.test.js   # run a single test file
 
 This is a Create React App project (`react-scripts`). There are no tests in the repo yet; CRA's test runner picks up `*.test.js` files next to the code.
 
+Requires a `.env` (copy from `.env.example`) with `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_ANON_KEY`. The database schema lives in `supabase/schema.sql` and is applied via the Supabase SQL editor.
+
 ## Architecture
 
-Single-page React app with **no backend** — all state lives in the browser's `localStorage`. Deployed to Vercel (`vercel.json` rewrites every path to `/` so React Router handles routing client-side).
+Single-page React app backed by **Supabase (Postgres + Auth)**. It is designed for several tills in one shop sharing the same live data. Deployed to Vercel (`vercel.json` rewrites every path to `/` so React Router handles routing client-side).
 
-Three layers:
+Layers:
 
-1. **`src/utils/store.js`** — the entire data layer. Wraps `localStorage` reads/writes behind typed CRUD functions (products, sales, settings, users) plus `getDashboardStats()` for analytics aggregation. Owns the seed data and the four storage keys (`os_products`, `os_sales`, `os_settings`, `os_users`). `initStore()` seeds defaults only if a key is empty. Also exports the canonical `CATEGORIES` and `PAYMENT_METHODS` constants and the `uid()` id generator. **All persistence goes through here** — components never touch `localStorage` directly.
+1. **`src/utils/supabaseClient.js`** — the shared Supabase client, built from the `REACT_APP_SUPABASE_*` env vars, with `persistSession` on (a till stays signed in across reloads/shifts).
 
-2. **`src/context/AppContext.js`** — global state via React Context (`useApp()` hook). Calls `initStore()` once on mount, then `refresh()` pulls products/sales/settings/stats into state. After any mutation (e.g. completing a sale), components call `refresh()` to re-sync. The current user is auto-logged-in as the cashier and persisted in `sessionStorage` (`os_user`); managers are verified by PIN.
+2. **`src/utils/store.js`** — the single data layer. **Async** functions (they return Promises) wrapping Supabase queries for products, sales, settings, plus client-side `getDashboardStats()`. Every function maps DB **snake_case** columns to the app's **camelCase** shapes (and back), so the rest of the app sees the same field names regardless of the DB. `getSales()` re-assembles the `sales` + `sale_items` join into the nested `{ ...sale, items: [] }` shape. `addSale()` calls the `create_sale` RPC. Also exports the `CATEGORIES` and `PAYMENT_METHODS` constants. **All persistence goes through here.**
 
-3. **`src/pages/*`** — one component per route (`Dashboard`, `POS`, `Products`, `SalesHistory`, `Reports`, `Settings`), wired in `src/App.js`. `src/components/UI.js` is a shared inline-styled component kit (`Btn`, `Input`, `Select`, `Modal`, `Card`, `StatCard`, `Badge`, `Alert`, `PinModal`, `ConfirmDialog`, `SearchBar`, etc.). `Receipt.js` and `Sidebar.js` are the other shared components.
+3. **`src/context/AppContext.js`** — global state + auth via React Context (`useApp()` hook). Tracks the Supabase auth `session`; **data only loads once a session exists** (RLS returns nothing otherwise). `refresh()` is async and pulls products/sales/settings/stats in parallel; after any mutation, components `await refresh()` to re-sync. Exposes `signIn`/`signOut`, `loading`, and `error`.
 
-### Key conventions
+4. **`src/App.js`** — the gate: waits for the session check, shows `<Login />` when signed out, a spinner during the first data load, an error screen on connection failure, otherwise the app. `src/pages/*` is one component per route (`Dashboard`, `POS`, `Products`, `SalesHistory`, `Reports`, `Settings`, `Login`). `src/components/UI.js` is a shared inline-styled component kit (`Btn`, `Input`, `Select`, `Modal`, `Card`, `StatCard`, `Badge`, `Alert`, `ConfirmDialog`, `SearchBar`, `Spinner`, …). `Receipt.js` and `Sidebar.js` are the other shared components.
 
-- **Styling is entirely inline `style={{}}` objects** keyed off CSS custom properties defined in `src/index.css` (`var(--teal)`, `var(--navy)`, `var(--radius)`, `var(--font-display)`, etc.). There is no CSS framework or CSS modules. Reuse the existing design tokens rather than hardcoding colors/spacing. Responsive behavior is done with `<style>` tags containing media queries injected into components.
+## Database (`supabase/schema.sql`)
 
-- **Currency is KES** throughout. Amounts are stored as **whole-number integers** (e.g. `89999` = KES 89,999, no decimals). Always format with `formatKES()` from `src/utils/format.js`; never render raw numbers.
+- Tables: `products`, `sales`, `sale_items` (header/detail; `sale_id` cascades, `product_id` is `ON DELETE SET NULL`), `settings` (single row pinned to `id = true`), and `users` (structure only, hashed PINs, currently unused by the app).
+- **Row Level Security** on every table requires an authenticated session (`for all to authenticated`). No per-action restrictions yet.
+- **`create_sale(...)` RPC** is the atomic checkout: in one transaction it takes a receipt number from a sequence, inserts the sale header, and for each line runs a **guarded** `UPDATE … SET stock = stock - qty WHERE id = … AND stock >= qty`. If any line lacks stock it raises and the whole sale rolls back — race-safe across tills, no overselling. Returns the saved sale with nested items.
 
-- **Role gating uses PINs, not auth.** Two roles: `manager` and `cashier`. Manager-only areas (Reports, sensitive Settings) gate behind `<PinModal>` / `verifyPin()` which checks `user.role === 'manager'`. Default PINs are seeded in `store.js` (`SEED_USERS`): manager `1234`, cashier `0000`.
+## Key conventions
 
-- **Sales are immutable records.** `addSale()` assigns a sequential `receiptNo` (`OST-0001`), timestamps it, and decrements product stock via `decrementStock()` in the same call. Cart line items snapshot `name`/`price` at sale time so historical receipts stay correct even if the product later changes.
+- **Styling is entirely inline `style={{}}` objects** keyed off CSS custom properties in `src/index.css` (`var(--teal)`, `var(--navy)`, `var(--radius)`, `var(--font-display)`, etc.). No CSS framework or modules. Reuse the design tokens rather than hardcoding colors/spacing. Hover/focus interactivity is done with inline `onMouseEnter`/`onFocus` handlers; responsive behavior with `<style>` tags containing media queries.
 
-- **Note:** `PinModal` in `UI.js` uses `require('../context/AppContext')` / `require('../utils/store')` inline (CommonJS) to dodge circular imports — match that pattern if you touch it rather than converting to top-level ESM imports.
+- **Currency is KES** throughout, stored as **whole-number integers** (`89999` = KES 89,999, no decimals) — `integer` columns in Postgres. Always format with `formatKES()` from `src/utils/format.js`; never render raw numbers.
+
+- **Access is a single shared login**, not per-user PINs or roles. One Supabase Auth account (email + password) signs in every till; sign out from the sidebar. (The `users` table exists for a possible future re-introduction of roles, but nothing reads it.)
+
+- **Sales are immutable records.** Checkout goes through `create_sale`, which assigns a sequential `receiptNo` (`OST-0001`) and decrements stock atomically. Line items snapshot `name`/`unit_price` at sale time so historical receipts stay correct even if a product later changes or is deleted.
+
+- **Data layer is async; the rest of the app awaits it.** Pages read through `AppContext` (the single source of truth) and `await` writes (`addProduct`, `deleteSale`, `saveSettings`, `addSale`) followed by `refresh()`. Don't call `store.js` reads directly from components — go through context. `Receipt.js` takes settings from context/props, not a synchronous store read.

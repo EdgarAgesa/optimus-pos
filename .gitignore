@@ -5,5 +5,5 @@ build/
 .env.*.local
 .DS_Store
 
-# Claude Code local (per-machine) settings — keep personal config out of the repo
-.claude/settings.local.json
+# Claude Code config — keep out of the repo
+.claude/
