@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import Sidebar from './components/Sidebar';
 import { Spinner } from './components/UI';
@@ -22,8 +22,6 @@ function FullScreen({ children }) {
 
 function Layout() {
   const [collapsed, setCollapsed] = useState(false);
-  const location = useLocation();
-  const isPOS = location.pathname === '/pos';
   const { authReady, session, loading, error } = useApp();
 
   // 1. Wait for the persisted session check before deciding anything.

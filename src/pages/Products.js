@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Package, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, AlertTriangle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { addProduct, updateProduct, deleteProduct, CATEGORIES } from '../utils/store';
 import { Btn, Input, Select, Modal, Badge, Card, SearchBar, ConfirmDialog, Empty, Alert } from '../components/UI';

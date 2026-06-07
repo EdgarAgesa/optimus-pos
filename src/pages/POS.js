@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Minus, Trash2, ShoppingCart, User, Percent, Printer, MessageSquare, X, CheckCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { addSale, CATEGORIES, PAYMENT_METHODS } from '../utils/store';
-import { Btn, Input, Select, Modal, Badge, SearchBar, Alert } from '../components/UI';
+import { Btn, Input, Modal, Badge, SearchBar, Alert } from '../components/UI';
 import { formatKES, formatDateTime, shareWhatsApp } from '../utils/format';
 import Receipt from '../components/Receipt';
 
@@ -20,7 +20,6 @@ export default function POS() {
   const [showReceipt, setShowReceipt] = useState(false);
   const [error, setError] = useState('');
   const [processing, setProcessing] = useState(false);
-  const printRef = useRef();
 
   useEffect(() => { refresh(); }, [refresh]);
 
